@@ -1,0 +1,305 @@
+plugins {
+    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+loom {
+    mods {
+        "knifemod" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+repositories {
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+// ---------------------------------------------------------------------------
+// Knife catalogue. Every base is combined with every finish, so this makes
+// bases.size() * finishes.size() knives. Edit these lists to add more.
+// ---------------------------------------------------------------------------
+
+// [base name, shape key used by shapeOf() below]
+def knifeBases = [
+    ["Karambit", "karambit"],
+    ["Butterfly Knife", "butterfly"],
+    ["Bayonet", "bayonet"],
+    ["Flip Knife", "flip"],
+    ["M9 Bayonet", "m9"],
+    ["Talon Knife", "talon"],
+    ["Skeleton Knife", "skeleton"],
+    ["Huntsman Knife", "huntsman"],
+    ["Shadow Dagger", "shadow"],
+    ["Kukri Knife", "kukri"],
+]
+
+// [finish name, rarity name (COMMON, UNCOMMON, RARE, EPIC, LEGENDARY)]
+def knifeFinishes = [
+    ["Vanilla", "COMMON"],
+    ["Tiger Tooth", "UNCOMMON"],
+    ["Fade", "UNCOMMON"],
+    ["Doppler", "UNCOMMON"],
+    ["Black Pearl", "RARE"],
+    ["Lore", "RARE"],
+    ["Slaughter", "RARE"],
+    ["Crimson Web", "RARE"],
+    ["Ruby", "EPIC"],
+    ["Emerald", "EPIC"],
+    ["Sapphire", "EPIC"],
+    ["Void", "EPIC"],
+    ["Gold", "LEGENDARY"],
+    ["Marble Fade", "LEGENDARY"],
+    ["Donut", "LEGENDARY"],
+    ["Diamond", "LEGENDARY"],
+]
+
+def snakeCase = { String s -> s.toLowerCase().replace(' ', '_') }
+
+def knives = []
+knifeBases.each { b ->
+    knifeFinishes.each { f ->
+        def shortBase = b[0].replace(' Knife', '').replace(' Dagger', '')
+        def isVanilla = f[0] == 'Vanilla'
+        def kid = isVanilla ? snakeCase(shortBase) : "${snakeCase(f[0])}_${snakeCase(shortBase)}"
+        def kname = isVanilla ? b[0] : "${f[0]} ${b[0]}"
+        def blade = "knifemod:item/blade_" + snakeCase(f[0])
+        knives << [id: kid, name: kname, base: b[0], shape: b[1], finish: f[0], rarity: f[1], tex: blade]
+    }
+}
+
+def ids = knives.collect { it.id }
+if (ids.size() != ids.toSet().size()) {
+    throw new GradleException("Duplicate knife ids generated")
+}
+
+// Generated code and assets go under build/, so the repo only holds the catalogue above.
+def genRoot = layout.buildDirectory.dir("generated/knives").get().asFile
+
+sourceSets {
+    main {
+        java.srcDir new File(genRoot, "java")
+        resources.srcDir new File(genRoot, "resources")
+    }
+}
+
+tasks.register("generateKnives") {
+    outputs.dir(genRoot)
+    doLast {
+        genRoot.deleteDir()
+        def javaDir = new File(genRoot, "java/com/knifemod")
+        def assetDir = new File(genRoot, "resources/assets/knifemod")
+        def texDir = new File(assetDir, "textures/item")
+        javaDir.mkdirs()
+        new File(assetDir, "items").mkdirs()
+        new File(assetDir, "models/item").mkdirs()
+        new File(assetDir, "lang").mkdirs()
+        texDir.mkdirs()
+
+        // ---- colour helpers -------------------------------------------------
+        def mix = { int a, int b, double t ->
+            double u = Math.max(0.0, Math.min(1.0, t))
+            int r = (int) (((a >> 16) & 255) * (1 - u) + ((b >> 16) & 255) * u)
+            int g = (int) (((a >> 8) & 255) * (1 - u) + ((b >> 8) & 255) * u)
+            int bl = (int) ((a & 255) * (1 - u) + (b & 255) * u)
+            (r << 16) | (g << 8) | bl
+        }
+
+        // Per-finish skin pattern for one blade pixel (x and y run 0..15, y=0 is the tip)
+        def pattern = { String finish, Random rnd, int x, int y ->
+            double v = y / 15.0
+            double wave = (Math.sin((x + y) * 0.8) + 1) / 2
+            switch (finish) {
+                case 'Vanilla':     return mix(0x9AA0AA, 0xE6EAF0, v)
+                case 'Gold':        return mix(0x8A6A1E, 0xFFE58A, v)
+                case 'Fade':        return mix(0xFF8C00, 0x8B0000, v)
+                case 'Doppler':     return rnd.nextInt(10) == 0 ? 0x2E8B57 : mix(0x3A2A9A, 0x7B68EE, wave)
+                case 'Tiger Tooth': return ((x + (int) (y / 3)) % 6 < 3) ? 0xFFB347 : 0x3A2A10
+                case 'Black Pearl': return rnd.nextInt(40) == 0 ? 0xE0E8FF : mix(0x101018, 0x3A3A5E, rnd.nextDouble() * 0.4)
+                case 'Lore':        return mix(0xFFAA33, 0x7A3A00, (Math.sin(x * 0.9 + y * 0.4) + 1) / 2)
+                case 'Slaughter':   return rnd.nextInt(5) == 0 ? 0xDC143C : 0x4A0A0A
+                case 'Crimson Web': return (x % 4 == 0 || y % 4 == 0) ? 0xDC143C : 0x140606
+                case 'Ruby':        return y == 2 ? 0xFFFFFF : mix(0x700020, 0xE0115F, v)
+                case 'Emerald':     return y == 2 ? 0xDFFFEA : mix(0x0B5A2E, 0x50C878, v)
+                case 'Sapphire':    return y == 2 ? 0xDDEEFF : mix(0x06224A, 0x0F52BA, v)
+                case 'Void':        return mix(0x1A0033, 0x6A0DAD, rnd.nextDouble())
+                case 'Marble Fade': return [0xE0115F, 0x0F52BA, 0xFFFFFF][Math.min(2, (int) (((Math.sin(x * 0.7 + y * 0.5) + 1) / 2) * 3))]
+                case 'Donut':       return rnd.nextInt(12) == 0 ? 0x8B4513 : (rnd.nextInt(12) == 1 ? 0xFFFFFF : 0xFF8FC7)
+                case 'Diamond':     return rnd.nextInt(18) == 0 ? 0xFFFFFF : mix(0x3FA8C0, 0x9EF0FF, v)
+                default:            return 0x9AA0AA
+            }
+        }
+
+        def writeTexture = { File f, Closure px ->
+            def img = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    int c = (int) px.call(x, y)
+                    img.setRGB(x, y, c | (0xFF << 24))
+                }
+            }
+            javax.imageio.ImageIO.write(img, "png", f)
+        }
+
+        // One blade texture per finish, plus one shared grip texture
+        knifeFinishes.each { f ->
+            writeTexture(new File(texDir, "blade_${snakeCase(f[0])}.png"),
+                    pattern.curry(f[0], new Random(f[0].hashCode())))
+        }
+        writeTexture(new File(texDir, "handle.png")) { int x, int y ->
+            (y % 3 == 0) ? 0x4A3A2A : ((x % 5 == 0) ? 0x222222 : 0x2E2E2E)
+        }
+
+        // ---- 3D shapes ------------------------------------------------------
+        // Coordinates are 0..16 on each axis. The blade points up the Y axis.
+        def boxRot = { List from, List to, String tex, Map rot ->
+            def e = [from: from, to: to, faces: [:]]
+            ['north', 'south', 'east', 'west', 'up', 'down'].each { d -> e.faces[d] = [texture: "#" + tex] }
+            if (rot != null) e.rotation = rot
+            e
+        }
+        def box = { List from, List to, String tex -> boxRot(from, to, tex, null) }
+
+        def shapeOf = { String shape ->
+            switch (shape) {
+                case 'karambit': return [
+                    box([6.5, 0, 6.5], [9.5, 5, 9.5], 'handle'),
+                    box([6.5, 5, 7.5], [9.5, 10, 8.5], 'blade'),
+                    boxRot([6.5, 10, 7.5], [9.5, 13, 8.5], 'blade', [angle: 18, axis: 'z', origin: [8, 10, 8]]),
+                    boxRot([6.5, 13, 7.5], [9.5, 15, 8.5], 'blade', [angle: 38, axis: 'z', origin: [8, 13, 8]]),
+                    box([4, 4, 7.5], [6.5, 5.5, 8.5], 'handle'),
+                ]
+                case 'butterfly': return [
+                    boxRot([6.5, 0, 6.5], [9.5, 6, 9.5], 'handle', [angle: 25, axis: 'y', origin: [8, 3, 8]]),
+                    boxRot([6.5, 0, 6.5], [9.5, 6, 9.5], 'handle', [angle: -25, axis: 'y', origin: [8, 3, 8]]),
+                    box([7.5, 6, 7.5], [8.5, 15, 8.5], 'blade'),
+                ]
+                case 'bayonet': return [
+                    box([6.5, 0, 6.5], [9.5, 5, 9.5], 'handle'),
+                    box([5, 5, 6.5], [11, 6.5, 9.5], 'handle'),
+                    box([7, 6, 7.5], [9, 16, 8.5], 'blade'),
+                ]
+                case 'flip': return [
+                    box([6, 0, 6], [10, 4.5, 10], 'handle'),
+                    box([5, 4.5, 5], [11, 6, 11], 'handle'),
+                    box([7, 6, 7], [9, 15, 9], 'blade'),
+                ]
+                case 'm9': return [
+                    box([6, 0, 6], [10, 4, 10], 'handle'),
+                    box([7, 4, 7.5], [9, 14, 8.5], 'blade'),
+                    boxRot([7, 14, 7.5], [9, 16, 8.5], 'blade', [angle: 20, axis: 'z', origin: [8, 14, 8]]),
+                ]
+                case 'talon': return [
+                    box([6.5, 0, 6.5], [9.5, 6, 9.5], 'handle'),
+                    boxRot([7, 6, 7.5], [9, 11, 8.5], 'blade', [angle: 10, axis: 'z', origin: [8, 6, 8]]),
+                    boxRot([7, 11, 7.5], [9, 15, 8.5], 'blade', [angle: 30, axis: 'z', origin: [8, 11, 8]]),
+                ]
+                case 'skeleton': return [
+                    box([6, 0, 6], [10, 7, 10], 'handle'),
+                    box([6.5, 7, 7], [9.5, 16, 9], 'blade'),
+                ]
+                case 'huntsman': return [
+                    box([6, 0, 6], [10, 7, 10], 'handle'),
+                    box([4.5, 6.5, 6.5], [11.5, 7.5, 9.5], 'handle'),
+                    box([5.5, 7, 7], [10.5, 16, 9], 'blade'),
+                ]
+                case 'shadow': return [
+                    box([6, 0, 6], [10, 9, 10], 'handle'),
+                    box([7, 9, 7], [9, 15, 9], 'blade'),
+                ]
+                case 'kukri': return [
+                    box([6.5, 0, 6.5], [9.5, 7, 9.5], 'handle'),
+                    boxRot([6.5, 7, 7], [9.5, 11, 9], 'blade', [angle: -12, axis: 'z', origin: [8, 7, 8]]),
+                    boxRot([6.5, 11, 7], [9.5, 16, 9], 'blade', [angle: -22, axis: 'z', origin: [8, 11, 8]]),
+                ]
+                default: return [box([7, 0, 7], [9, 16, 9], 'blade')]
+            }
+        }
+
+        // First-person and third-person hand positions, so the knife sits in the hand like a held sword
+        def display = [
+            firstperson_righthand: [rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68]],
+            firstperson_lefthand: [rotation: [0, 90, -25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68]],
+            thirdperson_righthand: [rotation: [0, 0, 0], translation: [0, 0.5, 0], scale: [0.55, 0.55, 0.55]],
+            thirdperson_lefthand: [rotation: [0, 0, 0], translation: [0, 0.5, 0], scale: [0.55, 0.55, 0.55]],
+            gui: [rotation: [0, 0, -45], translation: [0, 0, 0], scale: [0.9, 0.9, 0.9]],
+        ]
+
+        // ---- Java registry, item models, item definitions, lang --------------
+        def java = [
+            "package com.knifemod;",
+            "",
+            "import java.util.List;",
+            "",
+            "/** GENERATED by build.gradle. Do not edit. */",
+            "public final class KnifeList {",
+            "    public static final List<KnifeDef> ALL = List.of(",
+        ]
+        knives.eachWithIndex { k, i ->
+            def comma = i < knives.size() - 1 ? "," : ""
+            java << String.format('        new KnifeDef("%s", "%s", "%s", "%s", Rarity.%s, 0x%06X, "%s")%s',
+                    k.id, k.name, k.base, k.finish, k.rarity, 0, k.tex, comma)
+        }
+        java += ["    );", "", "    private KnifeList() {", "    }", "}", ""]
+        new File(javaDir, "KnifeList.java").text = java.join("\n")
+
+        def lang = new TreeMap<String, String>()
+        knives.each { k ->
+            lang["item.knifemod.${k.id}".toString()] = k.name
+
+            def model = [
+                textures: [blade: "knifemod:item/blade_" + snakeCase(k.finish), handle: "knifemod:item/handle"],
+                elements: shapeOf(k.shape),
+                display: display,
+            ]
+            new File(assetDir, "models/item/${k.id}.json").text =
+                    groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(model))
+
+            def itemDef = [model: [type: "minecraft:model", model: "knifemod:item/${k.id}".toString()]]
+            new File(assetDir, "items/${k.id}.json").text =
+                    groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(itemDef))
+        }
+        lang["category.knifemod"] = "Knife Cases"
+        lang["key.knifemod.open_menu"] = "Open case menu"
+        lang["key.knifemod.spin"] = "Draw / put away knife"
+        lang["key.knifemod.inspect"] = "Inspect knife"
+        new File(assetDir, "lang/en_us.json").text =
+                groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(lang))
+        logger.lifecycle("Generated ${knives.size()} knives")
+    }
+}
+
+tasks.named("compileJava") { dependsOn "generateKnives" }
+tasks.named("processResources") { dependsOn "generateKnives" }
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.named("sourcesJar") { dependsOn "generateKnives" }
